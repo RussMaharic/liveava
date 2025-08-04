@@ -12,6 +12,9 @@ export default function HitlerVoiceAgent() {
   const [error, setError] = useState<string | null>(null);
   const [conversationHistory, setConversationHistory] = useState<Array<{role: 'user' | 'assistant', text: string}>>([]);
   const [testMode, setTestMode] = useState(false);
+  const [currentStatus, setCurrentStatus] = useState<string>('Ready');
+  const [audioLevel, setAudioLevel] = useState<number>(0);
+  const [debugInfo, setDebugInfo] = useState<string>('');
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -24,10 +27,14 @@ export default function HitlerVoiceAgent() {
   const startConversation = async () => {
     try {
       setError(null);
+      setCurrentStatus('Initializing...');
+      setDebugInfo('Setting up microphone and audio context...');
       console.log('🎬 Starting conversation...');
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+      setCurrentStatus('Microphone Ready');
+      setDebugInfo('Microphone access granted successfully');
       console.log('🎤 Microphone access granted');
       
       // Initialize audio context for continuous monitoring
@@ -45,12 +52,16 @@ export default function HitlerVoiceAgent() {
       analyserRef.current.fftSize = 512;
       analyserRef.current.smoothingTimeConstant = 0.8;
       
+      setCurrentStatus('Audio System Ready');
+      setDebugInfo('Audio context initialized, ready to listen');
       console.log('🔊 Audio context initialized');
       
       setIsConversationActive(true);
       startListening();
     } catch (err) {
       setError('Failed to access microphone. Please check permissions.');
+      setCurrentStatus('Error');
+      setDebugInfo('Microphone access failed: ' + err);
       console.error('Microphone access error:', err);
     }
   };
@@ -93,6 +104,8 @@ export default function HitlerVoiceAgent() {
     if (!streamRef.current || !isConversationActive) return;
     
     console.log('🎤 Starting to listen...');
+    setCurrentStatus('Listening...');
+    setDebugInfo('Waiting for your voice input');
     setIsListening(true);
     setIsProcessing(false);
     setIsSpeaking(false);
@@ -105,17 +118,23 @@ export default function HitlerVoiceAgent() {
       if (event.data.size > 0) {
         audioChunksRef.current.push(event.data);
         console.log('📼 Audio chunk received, size:', event.data.size);
+        setDebugInfo(`Recording audio: ${audioChunksRef.current.length} chunks`);
       }
     };
 
     mediaRecorder.onstop = async () => {
       console.log('🛑 Recording stopped, chunks:', audioChunksRef.current.length);
+      setCurrentStatus('Processing...');
+      setDebugInfo(`Processing ${audioChunksRef.current.length} audio chunks`);
       if (audioChunksRef.current.length > 0) {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
         console.log('🔄 Processing audio blob, size:', audioBlob.size);
         await processAudio(audioBlob);
       } else {
         console.log('❌ No audio chunks to process');
+        setCurrentStatus('No Audio Detected');
+        setDebugInfo('No audio was recorded, restarting listening...');
+        setTimeout(() => startListening(), 1000);
       }
     };
 
@@ -129,6 +148,7 @@ export default function HitlerVoiceAgent() {
     setTimeout(() => {
       if (isListening && mediaRecorderRef.current?.state === 'recording') {
         console.log('⏰ Fallback timeout: stopping recording after 5 seconds');
+        setDebugInfo('Fallback timeout reached, processing audio...');
         stopListening();
       }
     }, 5000);
@@ -148,9 +168,12 @@ export default function HitlerVoiceAgent() {
     setIsProcessing(true);
     setIsListening(false);
     setError(null);
+    setCurrentStatus('Sending to AI...');
+    setDebugInfo('Sending audio to Groq API for processing...');
 
     try {
       const audioBase64 = await blobToBase64(audioBlob);
+      setDebugInfo('Audio converted to base64, sending to API...');
       
       const response = await fetch('/api/voice-response', {
         method: 'POST',
@@ -167,6 +190,7 @@ export default function HitlerVoiceAgent() {
       }
 
       const data = await response.json();
+      setDebugInfo('AI response received, processing...');
       
       if (data.success) {
         // Add user message to conversation history
@@ -180,6 +204,8 @@ export default function HitlerVoiceAgent() {
         setResponseAudio(audioUrl);
         setResponseText(data.text);
         setIsSpeaking(true);
+        setCurrentStatus('Speaking...');
+        setDebugInfo('Playing AI response audio...');
         
         // Auto-play the response and continue conversation
         if (audioRef.current) {
@@ -189,6 +215,8 @@ export default function HitlerVoiceAgent() {
           audioRef.current.onended = () => {
             console.log('🔊 Audio playback finished, restarting listening...');
             setIsSpeaking(false);
+            setCurrentStatus('Ready to Listen');
+            setDebugInfo('Response finished, starting to listen again...');
             if (isConversationActive) {
               // Small delay before starting to listen again
               setTimeout(() => {
@@ -201,6 +229,8 @@ export default function HitlerVoiceAgent() {
           audioRef.current.onerror = (e) => {
             console.error('Audio playback error:', e);
             setIsSpeaking(false);
+            setCurrentStatus('Audio Error');
+            setDebugInfo('Audio playback failed, restarting...');
             if (isConversationActive) {
               setTimeout(() => startListening(), 1000);
             }
@@ -211,6 +241,8 @@ export default function HitlerVoiceAgent() {
             console.error('Audio play error:', e);
             // If audio fails to play, still continue conversation
             setIsSpeaking(false);
+            setCurrentStatus('Audio Error');
+            setDebugInfo('Audio play failed, restarting...');
             if (isConversationActive) {
               setTimeout(() => startListening(), 1000);
             }
@@ -221,6 +253,8 @@ export default function HitlerVoiceAgent() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to process audio');
+      setCurrentStatus('Error');
+      setDebugInfo('API error: ' + err);
       console.error('Processing error:', err);
       
       // If there's an error, continue listening if conversation is active
@@ -261,9 +295,13 @@ export default function HitlerVoiceAgent() {
       analyserRef.current?.getByteFrequencyData(dataArray);
       const average = dataArray.reduce((a, b) => a + b) / bufferLength;
       
+      // Update audio level for UI
+      setAudioLevel(average);
+      
       // Log audio levels every 2 seconds for debugging
       if (Date.now() % 2000 < 50) {
         console.log('Audio level:', average.toFixed(1), 'Speech detected:', speechDetected);
+        setDebugInfo(`Audio level: ${average.toFixed(1)}, Speech: ${speechDetected ? 'Yes' : 'No'}`);
       }
       
       // Detect start of speech
@@ -271,6 +309,8 @@ export default function HitlerVoiceAgent() {
         speechDetected = true;
         speechStartTime = Date.now();
         silenceStart = null;
+        setCurrentStatus('Speech Detected!');
+        setDebugInfo(`Speech started! Audio level: ${average.toFixed(1)}`);
         console.log('🎤 Speech detected! Audio level:', average.toFixed(1));
       }
       
@@ -280,14 +320,20 @@ export default function HitlerVoiceAgent() {
           // Silence detected after speech
           if (!silenceStart) {
             silenceStart = Date.now();
+            setCurrentStatus('Silence Detected');
+            setDebugInfo('Silence detected after speech, waiting...');
             console.log('🤫 Silence started after speech...');
           } else if (Date.now() - silenceStart > SILENCE_DURATION) {
             // Check if we had enough speech duration
             if (speechStartTime && Date.now() - speechStartTime > MIN_SPEECH_DURATION) {
+              setCurrentStatus('Processing Speech');
+              setDebugInfo('End of speech detected, processing audio...');
               console.log('✅ End of speech detected, processing audio...');
               stopListening();
               return;
             } else {
+              setCurrentStatus('Speech Too Short');
+              setDebugInfo('Speech was too short, resetting...');
               console.log('❌ Speech too short, resetting...');
               speechDetected = false;
               speechStartTime = null;
@@ -412,32 +458,48 @@ export default function HitlerVoiceAgent() {
               </button>
             )}
 
-            {/* Status Indicators */}
+            {/* Enhanced Status Display */}
             {isConversationActive && (
-              <div className="text-center space-y-2">
+              <div className="space-y-4">
+                {/* Current Status */}
+                <div className="bg-gray-800 rounded-lg p-4">
+                  <h3 className="text-lg font-semibold mb-2">Status:</h3>
+                  <div className="text-center">
+                    <div className={`text-xl font-bold mb-2 ${
+                      currentStatus.includes('Listening') ? 'text-green-400' :
+                      currentStatus.includes('Processing') ? 'text-yellow-400' :
+                      currentStatus.includes('Speaking') ? 'text-blue-400' :
+                      currentStatus.includes('Error') ? 'text-red-400' :
+                      'text-gray-300'
+                    }`}>
+                      {currentStatus}
+                    </div>
+                    <div className="text-sm text-gray-400">{debugInfo}</div>
+                  </div>
+                </div>
+
+                {/* Audio Level Meter */}
                 {isListening && (
-                  <div className="text-green-400 animate-pulse">
-                    🎤 Listening... Speak now (auto-detects silence)
+                  <div className="bg-gray-800 rounded-lg p-4">
+                    <h3 className="text-lg font-semibold mb-2">Audio Level:</h3>
+                    <div className="w-full bg-gray-700 rounded-full h-4">
+                      <div 
+                        className="bg-green-500 h-4 rounded-full transition-all duration-100"
+                        style={{ width: `${Math.min((audioLevel / 50) * 100, 100)}%` }}
+                      ></div>
+                    </div>
+                    <div className="text-center text-sm text-gray-400 mt-2">
+                      Level: {audioLevel.toFixed(1)}
+                    </div>
                   </div>
                 )}
-                
-                {isProcessing && (
-                  <div className="text-yellow-400">
-                    🤔 Processing your message...
-                  </div>
-                )}
-                
-                {isSpeaking && (
-                  <div className="text-blue-400 animate-pulse">
-                    🗣️ Speaking...
-                  </div>
-                )}
-                
-                {!isListening && !isProcessing && !isSpeaking && (
-                  <div className="text-gray-400">
-                    💭 Conversation active, ready to listen
-                  </div>
-                )}
+
+                {/* Quick Status Icons */}
+                <div className="flex justify-center space-x-4 text-2xl">
+                  {isListening && <div className="text-green-400 animate-pulse">🎤</div>}
+                  {isProcessing && <div className="text-yellow-400">🤔</div>}
+                  {isSpeaking && <div className="text-blue-400 animate-pulse">🗣️</div>}
+                </div>
               </div>
             )}
 
