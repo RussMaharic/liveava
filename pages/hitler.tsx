@@ -101,7 +101,15 @@ export default function HitlerVoiceAgent() {
   };
 
   const startListening = () => {
-    if (!streamRef.current || !isConversationActive) return;
+    if (!streamRef.current || !isConversationActive) {
+      console.log('❌ Cannot start listening:', { 
+        hasStream: !!streamRef.current, 
+        isActive: isConversationActive 
+      });
+      setCurrentStatus('Error');
+      setDebugInfo('Cannot start listening - missing stream or conversation not active');
+      return;
+    }
     
     console.log('🎤 Starting to listen...');
     setCurrentStatus('Listening...');
@@ -142,7 +150,19 @@ export default function HitlerVoiceAgent() {
     console.log('🔴 MediaRecorder started');
     
     // Start voice activity detection
+    console.log('🔍 Starting voice activity detection...');
     startVoiceActivityDetection();
+    
+    // Add immediate debug info
+    setTimeout(() => {
+      if (isListening) {
+        setDebugInfo('Listening active, checking audio levels...');
+        console.log('✅ Listening is active, checking audio levels...');
+      } else {
+        setDebugInfo('Listening failed to start');
+        console.log('❌ Listening failed to start');
+      }
+    }, 1000);
     
     // Fallback: automatically stop after 5 seconds and process whatever we have
     setTimeout(() => {
@@ -269,17 +289,25 @@ export default function HitlerVoiceAgent() {
   };
 
   const startVoiceActivityDetection = () => {
+    console.log('🔍 Voice activity detection - checking prerequisites...');
+    console.log('Analyser exists:', !!analyserRef.current);
+    console.log('Conversation active:', isConversationActive);
+    
     if (!analyserRef.current || !isConversationActive) {
-      console.log('Voice activity detection failed to start:', { 
+      console.log('❌ Voice activity detection failed to start:', { 
         hasAnalyser: !!analyserRef.current, 
         isActive: isConversationActive 
       });
+      setCurrentStatus('VAD Error');
+      setDebugInfo('Voice activity detection failed - missing analyser or conversation not active');
       return;
     }
     
-    console.log('Starting voice activity detection...');
+    console.log('✅ Starting voice activity detection...');
     const bufferLength = analyserRef.current.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
+    console.log('Buffer length:', bufferLength);
+    setDebugInfo('Voice activity detection started, monitoring audio...');
     
     let silenceStart: number | null = null;
     let speechDetected = false;
@@ -290,9 +318,17 @@ export default function HitlerVoiceAgent() {
     let speechStartTime: number | null = null;
     
     const checkVoiceActivity = () => {
-      if (!isListening || !isConversationActive) return;
+      if (!isListening || !isConversationActive) {
+        console.log('🛑 Voice activity check stopped:', { isListening, isConversationActive });
+        return;
+      }
       
-      analyserRef.current?.getByteFrequencyData(dataArray);
+      if (!analyserRef.current) {
+        console.log('❌ No analyser in voice activity check');
+        return;
+      }
+      
+      analyserRef.current.getByteFrequencyData(dataArray);
       const average = dataArray.reduce((a, b) => a + b) / bufferLength;
       
       // Update audio level for UI
@@ -426,14 +462,30 @@ export default function HitlerVoiceAgent() {
           </div>
 
           <div className="space-y-6">
-            {/* Test Button */}
-            <button
-              onClick={testApiDirectly}
-              disabled={isProcessing}
-              className="w-full py-2 px-4 rounded-lg font-medium text-sm bg-yellow-600 hover:bg-yellow-700 transition-colors"
-            >
-              🧪 Test API (Skip Voice Detection)
-            </button>
+                         {/* Test Buttons */}
+             <div className="space-y-2">
+               <button
+                 onClick={testApiDirectly}
+                 disabled={isProcessing}
+                 className="w-full py-2 px-4 rounded-lg font-medium text-sm bg-yellow-600 hover:bg-yellow-700 transition-colors"
+               >
+                 🧪 Test API (Skip Voice Detection)
+               </button>
+               
+               <button
+                 onClick={() => {
+                   console.log('🔧 Force starting conversation...');
+                   setCurrentStatus('Force Starting...');
+                   setDebugInfo('Bypassing normal flow...');
+                   setIsConversationActive(true);
+                   setTimeout(() => startListening(), 500);
+                 }}
+                 disabled={isProcessing || isConversationActive}
+                 className="w-full py-2 px-4 rounded-lg font-medium text-sm bg-purple-600 hover:bg-purple-700 transition-colors"
+               >
+                 🔧 Force Start Conversation
+               </button>
+             </div>
 
             {/* Main Button */}
             <button
